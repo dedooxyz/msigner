@@ -1,47 +1,226 @@
-# msigner: Ordinals Atomic Swap PSBT Signer
+# msigner: Multi-Chain Ordinals Atomic Swap PSBT Signer
 
-msigner is an open source Bitcoin Ordinals Partially Signed Bitcoin Transactions (PSBT) signer library. It supports atomic swap of the inscription and provides a simple and secure way to structure Bitcoin transactions for marketplaces.
+msigner is an open source Bitcoin Ordinals Partially Signed Bitcoin Transactions (PSBT) signer library. It supports atomic swap of inscriptions and provides a simple and secure way to structure Bitcoin transactions for marketplaces.
+
+**GitHub**: [https://github.com/dedooxyz/msigner](https://github.com/dedooxyz/msigner)
+
+## Multi-Chain Support
+
+This fork adds support for **any Bitcoin-like blockchain**:
+
+| Chain | Symbol | Status | SegWit | Taproot | Address Prefix |
+|-------|--------|--------|--------|---------|----------------|
+| Bitcoin | BTC | ✅ Full | ✅ | ✅ | 1, 3, bc1 |
+| Junkcoin | JKC | ✅ Full | ❌ | ❌ | 7, J |
+| Bitcoin Classic | XBT | ✅ Full | ❌ | ❌ | 1, 3, bc1 |
+| Briskcoin | BKC | ✅ Full | ✅ | ❌ | B |
+| Craftcoin | CRC | ✅ Full | ❌ | ❌ | Q, craft1 |
+| DogecoinEV | DEV | ✅ Full | ❌ | ❌ | D |
+| FRSC | FRSC | ✅ Full | ❌ | ❌ | F |
+| Lebowski | LBW | ✅ Full | ❌ | ❌ | 6, lbw1 |
+| Litecoin | LTC | ✅ Full | ✅ | ❌ | L, ltc1 |
+| Dogecoin | DOGE | ✅ Full | ❌ | ❌ | D |
+
+## Installation
+
+```bash
+# Install from GitHub
+npm install github:dedooxyz/msigner
+
+# Or add to package.json
+"dependencies": {
+  "msigner": "github:dedooxyz/msigner"
+}
+```
+
+## Quick Start
+
+### For Bitcoin (Original Usage)
+
+```typescript
+import { SellerSigner, BuyerSigner } from 'msigner';
+
+// Use default Bitcoin mainnet configuration
+const listing = await SellerSigner.generateUnsignedListingPSBTBase64({
+  network: bitcoin.networks.bitcoin,
+  seller: {
+    makerFeeBp: 100,
+    sellerOrdAddress: 'bc1p...',
+    price: 100000, // satoshis
+    ordItem: { ... },
+    sellerReceiveAddress: 'bc1p...',
+  },
+});
+```
+
+### For Junkcoin
+
+```typescript
+import {
+  SellerSigner,
+  junkcoinMainnet,
+  FullnodeRPC,
+  StaticFeeProvider,
+} from 'msigner';
+
+// Create Junkcoin RPC provider
+const rpcProvider = new FullnodeRPC({
+  host: 'http://localhost',
+  port: 9771,
+  user: 'rpcuser',
+  pass: 'rpcpass',
+});
+
+// Use static fees for chains without mempool.space
+const feeProvider = new StaticFeeProvider({
+  fastestFee: 10,
+  halfHourFee: 5,
+  hourFee: 2,
+  minimumFee: 1,
+});
+
+// Create listing with Junkcoin network
+const listing = await SellerSigner.generateUnsignedListingPSBTBase64(
+  {
+    network: junkcoinMainnet.network,
+    seller: {
+      makerFeeBp: 100,
+      sellerOrdAddress: '7xxxxxxxxxxxxxxxxxxxxxxxxxxxxR4HN',
+      price: 100000000, // 1 JKC in satoshis
+      ordItem: { ... },
+      sellerReceiveAddress: '7xxxxxxxxxxxxxxxxxxxxxxxxxxxxR4HN',
+    },
+  },
+  rpcProvider,
+);
+```
+
+### Adding a Custom Chain
+
+```typescript
+import { createNetwork, SellerSigner } from 'msigner';
+import * as bitcoin from 'bitcoinjs-lib';
+
+// Define your chain's network parameters
+const myChain = createNetwork({
+  name: 'mychain',
+  symbol: 'MYC',
+  network: {
+    messagePrefix: '\x19MyChain Signed Message:\n',
+    bech32: '', // Empty for legacy-only chains
+    bip32: {
+      public: 0x0488b21e,
+      private: 0x0488ade4,
+    },
+    pubKeyHash: 0x1e, // Your chain's address prefix
+    scriptHash: 0x05,
+    wif: 0x80,
+  },
+  supportsSegwit: false,
+  supportsTaproot: false,
+  defaultRpcPort: 12345,
+});
+
+// Use with the signer
+const listing = await SellerSigner.generateUnsignedListingPSBTBase64(
+  { network: myChain.network, seller: { ... } },
+  myRpcProvider,
+);
+```
 
 ## Features
 
-msigner library comes packed with a variety of features that make it an ideal choice for anyone looking for a simple and secure way to sign Bitcoin transactions. Here are some of the key features that set msigner apart:
+- **2-Dummy UTXO algorithm**: Provides maximal protection to the offset of the ordinals
+- **Seller-Buyer-friendly API**: SIGHASH_SINGLE|ANYONECANPAY for sellers, SIGHASH_DEFAULT for buyers
+- **Trust-minimized PSBT combining**: Zero communication required between seller and buyer
+- **Multi-chain support**: Bitcoin, Junkcoin, Briskcoin, Craftcoin, and more
+- **Legacy address support**: Works with chains that don't support SegWit or Taproot
 
-- **2-Dummy UTXO algorithm (Latest Design)**: The library leverages a 2-Dummy UTXO algorithm that provides maximal protection to the offset of the ordinals. As a convention of the ecosystem, it provides an utxo of the NFT at location offset `0` with postage 10k sats. This algorithm ensures that the transactions are secure and that the NFT will not be accidentally included as other programs’ dummy UTXOs, or burn into miner fees.
-- **Seller-Buyer-friendly API**:
-    - Protecting Buyer: The buyer signer API ensures that buyers are protected by allowing them to sign the whole PSBT without needing to know the seller signatures. This means that the buyer can create a `sighash_all` transaction without revealing any information about the seller's signature, at the same time, the buyer can verify that the trackable sat is sending towards the correct location. As a result, the buyer can be confident that their interests are protected throughout the transaction process.
-    - Protecting Seller: The seller signer API makes sure that the seller signature is not broadcasted, it is possible to change the price and cancel listings in a trust-minimized world. Since the marketplace platform can combine the seller’s `sighash_single|anyonecanpay` with the buyer’s `sighash_all` signatures, parties involved do not need to trust each other, rather they can rely on leveraging the wallets to **verify** the PSBT correctly.
-- **Trust-minimized PSBT combining**: The library makes combining PSBT trust-minimized and requires 0 communication from the seller and buyer. This feature ensures that the transaction is secure and that the parties involved can trust each other without the need of further communication. The combined PSBT can be processed with mempool acceptance tests.
-- **Wide range of wallets support**: msigner is targeting the browser-extension-type of wallets. `Hiro`, `Xverse`, `Unisats` are fully supported with P2SH, P2WPKH, P2TR inputs.
-- Support maker/taker fees.
-- Support dynamic bitcoin network fee with the selection of `fastestFee`, `halfHourFee`, `hourFee`, `minimumFee`.
-- Support different address to receive NFTs and Fund for both the seller and the buyer signer.
-- Support buyer and seller verification via fullnode’s mempool and the itemProvider.
+## How it Works
 
-## How it works
+As a **seller**:
+- Sign a single PSBT using `SIGHASH_SINGLE | ANYONECANPAY`
 
-<img src="./docs/psbt.excalidraw.png" width="600">
+As a **buyer**:
+- Sign a full PSBT using `SIGHASH_DEFAULT`
 
-As a seller:
-- Sign a single PSBT using the `SIGHASH_SINGLE | ANYONECANPAY`
-
-As a buyer:
-- Sign a full PSBT using the `SIGHASH_DEFAULT` with all the information available to the buyer, except the seller signature (i.e. finalScriptWitness).
-
-As a platform combiner
-- Verify seller signature
-- Verify buyer signature
+As a **platform combiner**:
+- Verify seller and buyer signatures
 - Merge seller and buyer signatures
 - Finalize and run mempool acceptance test
-- Broadcast the tx
+- Broadcast the transaction
+
+## API Reference
+
+### Networks
+
+```typescript
+import {
+  bitcoinMainnet,
+  bitcoinTestnet,
+  junkcoinMainnet,
+  briskcoinMainnet,
+  craftcoinMainnet,
+  dogecoinEvMainnet,
+  frscMainnet,
+  lebowskiMainnet,
+  litecoinMainnet,
+  dogecoinMainnet,
+  getNetwork,
+  createNetwork,
+} from 'msigner';
+
+// Get network by name or symbol
+const jkc = getNetwork('junkcoin');  // or 'jkc'
+const bkc = getNetwork('briskcoin'); // or 'bkc'
+```
+
+### Providers
+
+```typescript
+import {
+  FullnodeRPC,       // RPC provider for full nodes
+  MempoolProvider,   // Mempool.space API provider
+  StaticFeeProvider, // Fixed fee rates (for chains without mempool API)
+} from 'msigner';
+```
+
+### Signers
+
+```typescript
+import { SellerSigner, BuyerSigner } from 'msigner';
+
+// Seller operations
+SellerSigner.generateUnsignedListingPSBTBase64(listing, rpcProvider);
+SellerSigner.verifySignedListingPSBTBase64(req, config);
+
+// Buyer operations
+BuyerSigner.selectDummyUTXOs(utxos, itemProvider, rpcProvider);
+BuyerSigner.selectPaymentUTXOs(utxos, amount, ...);
+BuyerSigner.generateUnsignedBuyingPSBTBase64(listing, feeProvider, rpcProvider);
+BuyerSigner.mergeSignedBuyingPSBTBase64(sellerPsbt, buyerPsbt, network);
+```
 
 ## Development
 
-msigner is supposed to be used a dependency in any nodejs environment.
-To develop msigner, simply clone the repository and follow these steps:
+```bash
+# Clone the repository
+git clone https://github.com/dedooxyz/msigner.git
+cd msigner
 
-1. Install the required dependencies by running `npm install`.
-2. Build the library by running `npm run build`.
-3. Run the tests to ensure everything is working correctly by running `npm test`. More unit tests are coming!
+# Install dependencies
+npm install
+
+# Build
+npm run build
+
+# Run tests
+npm test
+
+# Format code
+npm run format
+```
 
 ## License
+
 Apache 2.0
